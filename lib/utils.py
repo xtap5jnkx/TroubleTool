@@ -154,6 +154,8 @@ class Utils:
         else:
             raise TypeError(f"Unsupported source type: {type(source)}")
         try:
-            return Utils.file_hash(dst_path) != hashlib.blake2b(source_bytes).digest()
+            # return Utils.file_hash(dst_path) != hashlib.blake2b(source_bytes).digest()
+            with open(dst_path, "rb") as f:
+                return f.read() != source_bytes
         except Exception:
             return True

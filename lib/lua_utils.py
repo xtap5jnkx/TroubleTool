@@ -14,9 +14,6 @@ class LuaUtils:
         self._base_map: Optional[dict[str, str]] = None
         self._original_map: Optional[dict[str, str]] = None
         self._changes: dict[str, list[tuple[str, str]]] = {}
-        self._mods_path: Optional[str] = None
-        self._mod_data_path: Optional[str] = None
-        self._mod_file: Optional[str] = None
         self.read()
 
     @property
@@ -29,26 +26,6 @@ class LuaUtils:
     def base_map(self, value: dict[str, str]):
         self._base_map = value
 
-    @property
-    def mods_path(self):
-        if not self._mods_path:
-            raise ValueError("Lua mods_path not initialized")
-        return self._mods_path
-
-    @mods_path.setter
-    def mods_path(self, value: str):
-        self._mods_path = value
-
-    @property
-    def mod_file(self):
-        if not self._mod_file:
-            raise ValueError("Lua mod_file not initialized")
-        return self._mod_file
-
-    @mod_file.setter
-    def mod_file(self, value: str):
-        self._mod_file = value
-
     def read(self):
         with open(self.file_path, "r", encoding="utf-8") as f:
             self._raw_code = f.read()
@@ -60,25 +37,12 @@ class LuaUtils:
         with open(file_path, "r", encoding="utf-8") as f:
             return rf"{f.read()}"
 
-    def _get_mod_data_path(self):
-        if self._mod_data_path:
-            return self._mod_data_path
-
-        mod_name = os.path.relpath(self.mod_file, self.mods_path).split(os.sep)[0]
-
-        return os.path.join(self.mods_path, mod_name)
-
     def _read_from_file(self, from_file: str):
         if not from_file.endswith(".lua"):
             from_file += ".lua"
 
-        self._mod_data_path = self._get_mod_data_path()
+        file_path = os.path.join(os.getcwd(), "lua", from_file)
 
-        file_path = (
-            os.path.join(self._mod_data_path, "lua", from_file)
-            if self.mods_path
-            else from_file
-        )
         with open(file_path, "r", encoding="utf-8") as f:
             return rf"{f.read()}"
 

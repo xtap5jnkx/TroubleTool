@@ -222,4 +222,4 @@ def patch(game_files):
 
 ## Credits
 
-Thanks to **K0lb3**, **nostro**, **rex**, **mal** for inspiration.
+Thanks to **K0lb3**, **NostroTS**, **TSRexEviL**, **Malediction9** for inspiration.

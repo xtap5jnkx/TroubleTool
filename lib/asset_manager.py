@@ -2,7 +2,9 @@ import io
 import os
 import shutil
 import zipfile
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from enum import Enum, auto
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 from lxml import etree as et
 
@@ -12,6 +14,15 @@ from lib.index_file_helper import IndexFileHelper
 from lib.utils import Utils
 
 logging.basicConfig(format="%(levelname)s - %(filename)s:%(lineno)d - %(message)s")
+parser = et.XMLParser(collect_ids=False, remove_comments=True)
+
+
+class ExtractionStatus(Enum):
+    """Represents the result of an extraction attempt."""
+
+    ERROR = 0
+    EXTRACTED = auto()
+    SKIPPED = auto()
 
 
 class AssetManager:
@@ -23,35 +34,45 @@ class AssetManager:
         self.index_file = os.path.join(self.package_path, "index")
         self.index_file_backup = self.index_file + ".backup"
         self._index_root: Optional[et._Element] = None
+        self._extraction_methods: Dict[str, Callable] = {
+            "raw": AssetManager._extract_raw,
+            "zip": AssetManager._extract_from_zip,
+            "encrypted_zip": AssetManager._extract_from_encrypted_zip,
+        }
 
         logging.info(f"AssetManager initialized at: {self.root}\n")
 
     @property
     def index_root(self) -> et._Element:
         if self._index_root is None:
-            raise ValueError("Index is empty: Package/index not found or corrupted.")
-        return self._index_root
+            self._load_index()
+
+        return self._index_root  # type: ignore
 
     def _load_index(self):
         # Load Package/index
         # if self.index_root is None:
-        self._index_root = et.fromstring(IndexFileHelper.load_index(self.index_file))
+        self._index_root = et.fromstring(
+            IndexFileHelper.load_index(self.index_file), parser
+        )
         if self._index_root is None:
             raise ValueError("Index is empty: Package/index not found or corrupted.")
 
-        # Save index to Data/index.xml
+        # Save a human-readable copy to Data/index.xml for reference
+        self._write_xml_to_data_dir(self._index_root)
+
+        logging.info(f"Loaded index from: {self.index_file}")
+
+    def _write_xml_to_data_dir(self, xml_root: et._Element):
         data_index_xml_file = os.path.join(self.data_path, "index.xml")
         if not os.path.exists(data_index_xml_file):
-            txt = et.tostring(self._index_root, encoding="utf-8", xml_declaration=True)
+            txt = et.tostring(xml_root, encoding="utf-8", xml_declaration=True)
             os.makedirs(self.data_path, exist_ok=True)
             try:
                 with open(data_index_xml_file, "wb") as f:
                     f.write(txt)
             except IOError as e:
-                logging.error(f"Error writing: {e}")
-                return
-
-        logging.info(f"Loaded index from: {self.index_file}")
+                logging.error(f"Error writing index.xml: {e}")
 
     def _save_index(self, mod_index_xml: Optional[et._Element] = None) -> None:
         if mod_index_xml is None:
@@ -59,122 +80,145 @@ class AssetManager:
         if mod_index_xml is None:
             raise ValueError("Index is empty.")
 
-        bstr = et.tostring(mod_index_xml, encoding="utf-8", xml_declaration=True)
-        IndexFileHelper.save_index(bstr, self.index_file)
+        source_bytes = et.tostring(
+            mod_index_xml, encoding="utf-8", xml_declaration=True
+        )
+        IndexFileHelper.save_index(source_bytes, self.index_file)
 
-    def _edit_index(self, entry: et._Element, original):
+    @staticmethod
+    def _edit_index(entry: et._Element, original: str):
         entry.set("method", "raw")
         entry.set("pack", f"../Data/{original.replace('\\', '/')}")
         # entry.set("pack", os.path.join("..", "Data", original))
         entry.set("virtual", os.path.basename(original))
-        size = entry.get("size")
-        if size is None:
-            size = "0"
+        size = entry.get("size", "0")
         entry.set("csize", size)
 
-    def _extract_entry(self, entry: et._Element):
-        """
-        Extracts a single asset entry from its package file to the Data directory.
-        Returns:
-            0 = error
-            1 = extracted
-            2 = skipped (already up-to-date)
-        """
-        original = entry.get("original")
+    @staticmethod
+    def _extract_raw(src_path: str, dst_path: str, **_):
+        if Utils.should_copy(src_path, dst_path):
+            shutil.copy2(src_path, dst_path)
+            return ExtractionStatus.EXTRACTED
+        return ExtractionStatus.SKIPPED
+
+    @staticmethod
+    def _extract_from_zip(
+        src_path: str, dst_path: str, entry: et._Element, original: str
+    ):
+        virtual_name = entry.get("virtual")
+        if not virtual_name:
+            logging.error(f"Virtual name not found for entry: {original}")
+            return ExtractionStatus.ERROR
+
+        with zipfile.ZipFile(src_path, "r") as zf:
+            raw_bytes = zf.read(virtual_name)
+
+        if Utils.should_write(raw_bytes, dst_path):
+            with open(dst_path, "wb") as f:
+                f.write(raw_bytes)
+            return ExtractionStatus.EXTRACTED
+
+        return ExtractionStatus.SKIPPED
+
+    @staticmethod
+    def _extract_from_encrypted_zip(
+        src_path: str, dst_path: str, entry: et._Element, original: str
+    ):
+        virtual_name = entry.get("virtual")
+        if not virtual_name:
+            logging.error(f"Virtual name not found for entry: {original}")
+            return ExtractionStatus.ERROR
+
+        with open(src_path, "rb") as f:
+            encrypted_data = f.read()
+
+        decrypted_data = Crypt.decrypt(encrypted_data)
+
+        with io.BytesIO(decrypted_data) as stream:
+            with zipfile.ZipFile(stream, "r") as zf:
+                raw_bytes = zf.read(virtual_name)
+
+        if Utils.should_write(raw_bytes, dst_path):
+            with open(dst_path, "wb") as f:
+                f.write(raw_bytes)
+            return ExtractionStatus.EXTRACTED
+
+        return ExtractionStatus.SKIPPED
+
+    def _extract_entry(self, entry: et._Element, original: str, pack: str):
         method = entry.get("method")
-        pack = entry.get("pack")
-        src_path = os.path.join(self.package_path, pack)  # pyright: ignore
+        if method is None:
+            logging.error(f"Method not found for entry: {original}")
+            return ExtractionStatus.ERROR
+
+        handler = self._extraction_methods.get(method)
+        if handler is None:
+            logging.error(f"Unknown extraction method '{method}' for entry: {original}")
+            return ExtractionStatus.ERROR
+
+        src_path = os.path.join(self.package_path, pack)
         if not os.path.exists(src_path):
             logging.exception(f"Source file not found: {src_path}")
-            return 0
-        dst_path = os.path.join(self.data_path, original)  # pyright: ignore
+            return ExtractionStatus.ERROR
+
+        dst_path = os.path.join(self.data_path, original)
         os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-        virtual_name = entry.get("virtual")  # entry folder name in zip
 
-        result = 2
         try:
-            if method == "raw":
-                if Utils.should_copy(src_path, dst_path):
-                    shutil.copy2(src_path, dst_path)
-                    result = 1
-            elif method == "zip":
-                if not virtual_name:
-                    logging.error(f"Virtual name not found for entry: {original}")
-                    return 0
-                with zipfile.ZipFile(src_path, "r") as zf:
-                    with zf.open(virtual_name) as zf_member:
-                        raw_bytes = zf_member.read()
-                if Utils.should_write(raw_bytes, dst_path):
-                    result = 1
-                    with open(dst_path, "wb") as f:
-                        f.write(raw_bytes)
-            elif method == "encrypted_zip":
-                if not virtual_name:
-                    logging.error(f"Virtual name not found for entry: {original}")
-                    return 0
-                encrypted_data = b""
-                with open(src_path, "rb") as f:
-                    encrypted_data = f.read()
-
-                decrypted_data = Crypt.decrypt(encrypted_data)
-
-                # Use BytesIO as an in-memory file for ZipFile
-                with io.BytesIO(decrypted_data) as stream:
-                    with zipfile.ZipFile(stream, "r") as zf:
-                        with zf.open(virtual_name) as zf_member:
-                            raw_bytes = zf_member.read()
-                if Utils.should_write(raw_bytes, dst_path):
-                    result = 1
-                    with open(dst_path, "wb") as f:
-                        f.write(raw_bytes)
-            else:
-                logging.error(f"Unknown extraction method '{method}': {original}")
-                return 0
-
-            self._edit_index(entry, original)
-            # self._edit_index_source(entry, original)
+            result = handler(src_path, dst_path, entry=entry, original=original)
+            if result != ExtractionStatus.ERROR:
+                self._edit_index(entry, original)
             return result
 
-        except FileNotFoundError:
-            logging.exception(f"Source file not found during extraction: {src_path}")
-        except zipfile.BadZipFile:
-            logging.exception(f"Bad zip file for entry {original} at {src_path}")
+        except (FileNotFoundError, zipfile.BadZipFile, KeyError) as e:
+            logging.exception(f"Failed to extract {original} from {src_path}: {e}")
         except Exception as e:
-            logging.exception(f"{e}")
-        return 0
+            logging.exception(f"{original} catch an unknown error: {e}")
+
+        return ExtractionStatus.ERROR
 
     def extract_entries(
-        self, original_text: str | set[str], match_mode: str = "prefix"
+        self, original_text: Union[str, Set[str]], match_mode: str = "prefix"
     ):
         """
         Extract entries from index where 'original' matches a given list or set.
         match_mode: 'prefix' (default) or 'exact'
         """
-        if not original_text:
-            return
         self._load_index()
 
         if isinstance(original_text, str):
             targets = {
-                os.path.normpath(p.strip()).lower()
+                p.strip().replace("\\", "/")
+                # os.path.normpath(p.strip()).lower()
                 for p in original_text.split(",")
                 if p.strip()
             }
         else:
-            targets = {os.path.normpath(p).lower() for p in original_text}
+            targets = {p.replace("\\", "/") for p in original_text}
+            # targets = {os.path.normpath(p).lower() for p in original_text}
 
-        extracted_count = 0
-        identical = 0
+        if not targets:
+            return
+
+        extracted_count = identical = 0
         index_modified = False
 
         logging.info("Searching for extract...")
+        entries_to_extract: List[Tuple[et._Element, str, str]] = []
 
         for entry in self.index_root:
             original = entry.get("original")
-            if not original:
+            if original is None:
                 continue
 
-            normalized_original = os.path.normpath(original).lower()
+            pack = entry.get("pack")
+            if pack is None:
+                continue
+            if os.path.basename(pack) == os.path.basename(original):
+                continue  # already extracted
+
+            # normalized_original = os.path.normpath(original).lower()
+            normalized_original = original.replace("\\", "/")
 
             match = (
                 any(normalized_original.startswith(p) for p in targets)
@@ -185,26 +229,36 @@ class AssetManager:
             if not match:
                 continue
 
-            # remove from target if exact match
             if match_mode == "exact":
                 targets.discard(normalized_original)
 
-            if os.path.basename(entry.get("pack") or "") == os.path.basename(original):
-                continue  # already extracted
-
-            result = self._extract_entry(entry)
-            if result > 0:
-                index_modified = True
-                if result == 1:
-                    extracted_count += 1
-                    logging.info(f"Extracted {original}")
-                else:
-                    identical += 1
-                    logging.debug(f"{original} not changed, skip extract")
+            entries_to_extract.append((entry, original, pack))
 
             # in exact mode, exit early when done
             if match_mode == "exact" and not targets:
                 break
+
+        counters = {status: 0 for status in ExtractionStatus}
+
+        with ThreadPoolExecutor() as executor:
+            futures = {
+                # *item: unpack the tuple
+                executor.submit(self._extract_entry, *item): item[1]
+                for item in entries_to_extract
+            }
+            for future in as_completed(futures):
+                original = futures[future]
+                status = future.result()
+                if status != ExtractionStatus.ERROR:
+                    counters[status] += 1
+                    index_modified = True
+                    if status == ExtractionStatus.EXTRACTED:
+                        logging.info(f"Extracted {original}")
+                    else:
+                        logging.debug(f"{original} not changed, path updated")
+
+        extracted_count = counters[ExtractionStatus.EXTRACTED]
+        identical = counters[ExtractionStatus.SKIPPED]
 
         # Logging summary
         if match_mode == "exact" and targets:

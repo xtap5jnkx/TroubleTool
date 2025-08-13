@@ -1,9 +1,9 @@
 import importlib
-import inspect
 import os
 import runpy
 import shutil
-from typing import Mapping, NamedTuple, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import NamedTuple, Optional
 from unittest.mock import patch
 
 from lxml import etree as et
@@ -82,16 +82,6 @@ class ModUtils:
             file_path = os.path.join(base_dir, rel_path)
 
         util = util_class(file_path)
-        if isinstance(util, LuaUtils):
-            mods_path = os.path.normpath(self.am.mods_path)
-            util.mods_path = mods_path
-            # find caller file
-            stack = inspect.stack()
-            for frame_info in stack:
-                caller_file = os.path.normpath(frame_info.filename)
-                if caller_file.startswith(mods_path):
-                    util.mod_file = caller_file
-                    break
         cache[rel_path] = util
         return util
 
@@ -174,10 +164,7 @@ class ModUtils:
             for root, dirs, files in os.walk(mod_data_path):
                 if main_py_found:
                     break
-                # dirs[:] = [d for d in dirs if d not in self.SKIPPED_MOD_DIRS]
-                for skip in ("__pycache__", "lua"):
-                    if skip in dirs:
-                        dirs.remove(skip)
+                dirs[:] = [d for d in dirs if d not in ("__pycache__", "lua")]
                 for filename in files:
                     file_path = os.path.join(root, filename)
                     extension = os.path.splitext(file_path)[1]
@@ -207,31 +194,30 @@ class ModUtils:
                 )
         return extract_paths, mod_file_map, quick_extract
 
-    def _read_files(self, file_map: Mapping[str, XmlUtils | LuaUtils | DicUtils]):
-        for file_obj in file_map.values():
-            try:
-                file_obj.read()
-            except Exception as e:
-                logging.error(f"{e}")
+    def _write_all_files(self):
+        from itertools import chain
 
-    def _write_files(self, file_map: Mapping[str, XmlUtils | LuaUtils | DicUtils]):
-        for file_obj in file_map.values():
+        all_files = chain(
+            self.xmls.values(),
+            self.scripts.values(),
+            self.dics.values()
+        )
+
+        def write_task(file_obj: XmlUtils | LuaUtils | DicUtils):
             try:
                 if file_obj.writeto(file_obj.file_path):
                     logging.info(f"Patched {file_obj.file_path}")
-                    continue
+                    return
                 logging.debug(f"no changes in {file_obj.file_path}")
             except Exception as e:
                 logging.error(f"{e} in {file_obj.file_path}")
 
-    def _write_all_files(self):
-        self._write_files(self.xmls)
-        self._write_files(self.scripts)
-        self._write_files(self.dics)
+        with ThreadPoolExecutor() as executor:
+            executor.map(write_task, all_files)
+
         self._clear_cache()
 
     def _patch_main(self, mod_dir: str):
-        # write first, then load again after patch, save some info
         self._write_all_files()
         with Utils.temp_sys_path(mod_dir):
             try:
@@ -254,7 +240,7 @@ class ModUtils:
             except Exception as e:
                 logging.exception(f"Error running main.py: {e}")
 
-    def _patch(self, mod_file):
+    def _patch(self, mod_file: str):
         logging.info(f"Running patch: {mod_file}")
         module_name = os.path.splitext(os.path.basename(mod_file))[0]
         with Utils.temp_sys_path(os.path.dirname(mod_file)):
@@ -333,14 +319,15 @@ class ModUtils:
                 continue
 
             logging.debug(f"{log_action} files for mod: '{mod_name}'")
-            for rel_path in mod_data.relative_paths:
+
+            def process_file(rel_path: str):
                 mod_file = os.path.join(mod_data.mod_data_path, rel_path)
                 extension = os.path.splitext(mod_file)[1]
 
                 if extension == ".py":
                     if is_create_patch is None:
                         self._patch(mod_file)
-                    continue
+                    return
 
                 base_file = (
                     os.path.join(self.am.root, rel_path)
@@ -350,7 +337,7 @@ class ModUtils:
                 if extension == ".stage":
                     if is_create_patch is None:
                         self._override(base_file, mod_file)
-                    continue
+                    return
 
                 handler_map = {".dic": DicUtils, ".lua": LuaUtils}
                 FileHandlerCls = handler_map.get(extension, XmlUtils)
@@ -358,6 +345,9 @@ class ModUtils:
                 self._merge(
                     FileHandlerCls, base_file, mod_file, rel_path, is_create_patch
                 )
+
+            with ThreadPoolExecutor() as executor:
+                executor.map(process_file, mod_data.relative_paths)
 
         if is_create_patch is None:
             logging.info("Save changes...")
