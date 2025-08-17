@@ -18,7 +18,7 @@ A Python tool for extracting specific game files and managing mods for **TROUBLE
 
 ## Installation
 
-1. **Install Python**. (>= 3.10 because of typing)
+1. **Install Python**. (>= 3.10 because of type hint)
 2. Install dependencies:
 
 ```bash
@@ -40,7 +40,7 @@ python TroubleTool.py
 ## Extracting Files
 
 * **Backup** `Game_folder/Package/index`. Remember restore the original before installing or creating patches.
-* Extracts specific files (e.g. `CEGUI/datafiles/lua_scripts`, `script`, `stage`, `xml`) — about 80 MB total.
+* Extracts specific files (e.g. `CEGUI/datafiles/lua_scripts`, `script`, `stage`, `xml`).
 * Extracted files go into `Game_folder/Data`, and their path the index file is updated to point there.
 * **auto-extraction** when install/create patch:
 
