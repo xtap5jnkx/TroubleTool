@@ -320,14 +320,15 @@ class ModUtils:
 
             logging.debug(f"{log_action} files for mod: '{mod_name}'")
 
-            def process_file(rel_path: str):
+            # def process_file(rel_path: str):
+            for rel_path in mod_data.relative_paths:
                 mod_file = os.path.join(mod_data.mod_data_path, rel_path)
                 extension = os.path.splitext(mod_file)[1]
 
                 if extension == ".py":
                     if is_create_patch is None:
                         self._patch(mod_file)
-                    return
+                    continue
 
                 base_file = (
                     os.path.join(self.am.root, rel_path)
@@ -337,7 +338,7 @@ class ModUtils:
                 if extension == ".stage":
                     if is_create_patch is None:
                         self._override(base_file, mod_file)
-                    return
+                    continue
 
                 handler_map = {".dic": DicUtils, ".lua": LuaUtils}
                 FileHandlerCls = handler_map.get(extension, XmlUtils)
@@ -346,8 +347,8 @@ class ModUtils:
                     FileHandlerCls, base_file, mod_file, rel_path, is_create_patch
                 )
 
-            with ThreadPoolExecutor() as executor:
-                executor.map(process_file, mod_data.relative_paths)
+            # with ThreadPoolExecutor() as executor:
+            #     executor.map(process_file, mod_data.relative_paths)
 
         if is_create_patch is None:
             logging.info("Save changes...")

@@ -13,6 +13,8 @@ from lib.crypt_utils import Crypt
 from lib.index_file_helper import IndexFileHelper
 from lib.utils import Utils
 
+Element = et._Element
+
 logging.basicConfig(format="%(levelname)s - %(filename)s:%(lineno)d - %(message)s")
 parser = et.XMLParser(collect_ids=False, remove_comments=True)
 
@@ -33,7 +35,7 @@ class AssetManager:
         self.mods_path = os.path.join(self.root, "Mods")
         self.index_file = os.path.join(self.package_path, "index")
         self.index_file_backup = self.index_file + ".backup"
-        self._index_root: Optional[et._Element] = None
+        self._index_root: Optional[Element] = None
         self._extraction_methods: Dict[str, Callable] = {
             "raw": AssetManager._extract_raw,
             "zip": AssetManager._extract_from_zip,
@@ -43,7 +45,7 @@ class AssetManager:
         logging.info(f"AssetManager initialized at: {self.root}\n")
 
     @property
-    def index_root(self) -> et._Element:
+    def index_root(self) -> Element:
         if self._index_root is None:
             self._load_index()
 
@@ -63,7 +65,7 @@ class AssetManager:
 
         logging.info(f"Loaded index from: {self.index_file}")
 
-    def _write_xml_to_data_dir(self, xml_root: et._Element):
+    def _write_xml_to_data_dir(self, xml_root: Element):
         data_index_xml_file = os.path.join(self.data_path, "index.xml")
         if not os.path.exists(data_index_xml_file):
             txt = et.tostring(xml_root, encoding="utf-8", xml_declaration=True)
@@ -74,7 +76,7 @@ class AssetManager:
             except IOError as e:
                 logging.error(f"Error writing index.xml: {e}")
 
-    def _save_index(self, mod_index_xml: Optional[et._Element] = None) -> None:
+    def _save_index(self, mod_index_xml: Optional[Element] = None) -> None:
         if mod_index_xml is None:
             mod_index_xml = self._index_root
         if mod_index_xml is None:
@@ -86,7 +88,7 @@ class AssetManager:
         IndexFileHelper.save_index(source_bytes, self.index_file)
 
     @staticmethod
-    def _edit_index(entry: et._Element, original: str):
+    def _edit_index(entry: Element, original: str):
         entry.set("method", "raw")
         entry.set("pack", f"../Data/{original.replace('\\', '/')}")
         # entry.set("pack", os.path.join("..", "Data", original))
@@ -102,9 +104,7 @@ class AssetManager:
         return ExtractionStatus.SKIPPED
 
     @staticmethod
-    def _extract_from_zip(
-        src_path: str, dst_path: str, entry: et._Element, original: str
-    ):
+    def _extract_from_zip(src_path: str, dst_path: str, entry: Element, original: str):
         virtual_name = entry.get("virtual")
         if not virtual_name:
             logging.error(f"Virtual name not found for entry: {original}")
@@ -122,7 +122,7 @@ class AssetManager:
 
     @staticmethod
     def _extract_from_encrypted_zip(
-        src_path: str, dst_path: str, entry: et._Element, original: str
+        src_path: str, dst_path: str, entry: Element, original: str
     ):
         virtual_name = entry.get("virtual")
         if not virtual_name:
@@ -145,7 +145,7 @@ class AssetManager:
 
         return ExtractionStatus.SKIPPED
 
-    def _extract_entry(self, entry: et._Element, original: str, pack: str):
+    def _extract_entry(self, entry: Element, original: str, pack: str):
         method = entry.get("method")
         if method is None:
             logging.error(f"Method not found for entry: {original}")
@@ -200,11 +200,11 @@ class AssetManager:
         if not targets:
             return
 
-        extracted_count = identical = 0
-        index_modified = False
-
         logging.info("Searching for extract...")
-        entries_to_extract: List[Tuple[et._Element, str, str]] = []
+        entries_to_extract: List[Tuple[Element, str, str]] = []
+
+        counters = {status: 0 for status in ExtractionStatus}
+        index_modified = False
 
         for entry in self.index_root:
             original = entry.get("original")
@@ -214,11 +214,14 @@ class AssetManager:
             pack = entry.get("pack")
             if pack is None:
                 continue
-            if os.path.basename(pack) == os.path.basename(original):
-                continue  # already extracted
 
             # normalized_original = os.path.normpath(original).lower()
             normalized_original = original.replace("\\", "/")
+
+            if os.path.basename(pack) == os.path.basename(original):
+                if normalized_original in targets:
+                    logging.debug(f"{original} already extracted")
+                continue  # already extracted
 
             match = (
                 any(normalized_original.startswith(p) for p in targets)
@@ -234,11 +237,19 @@ class AssetManager:
 
             entries_to_extract.append((entry, original, pack))
 
+            # # no multithreading version
+            # status = self._extract_entry(entry, original, pack)
+            # if status != ExtractionStatus.ERROR:
+            #     counters[status] += 1
+            #     index_modified = True
+            #     if status == ExtractionStatus.EXTRACTED:
+            #         logging.info(f"Extracted {original}")
+            #     else:
+            #         logging.debug(f"{original} not changed, path updated")
+
             # in exact mode, exit early when done
             if match_mode == "exact" and not targets:
                 break
-
-        counters = {status: 0 for status in ExtractionStatus}
 
         with ThreadPoolExecutor() as executor:
             futures = {

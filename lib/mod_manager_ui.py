@@ -170,7 +170,7 @@ their changes override earlier ones when conflicts occur.""",
         mod_names = [data["name"] for data in self.mods_model.data if data["enabled"]]
         if not mod_names:
             return
-        self.master.deiconify() # show main ui
+        # self.master.deiconify() # show main ui
         self._save_data()
         try:
             process_func = getattr(self.mod_utils, mode)
