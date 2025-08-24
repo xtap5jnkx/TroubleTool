@@ -41,6 +41,13 @@ class AssetManager:
             "zip": AssetManager._extract_from_zip,
             "encrypted_zip": AssetManager._extract_from_encrypted_zip,
         }
+        self._xpath_has_data_pack = et.XPath("entry[starts-with(@pack, '../Data/')]")
+        # self._xpath_entry_startswith_original = et.XPath(
+        #     "entry[starts-with(translate(@original, '\\', '/'), $target)]"
+        # )
+        # self._xpath_entry_by_original = et.XPath(
+        #     "entry[translate(@original, '\\', '/')=$target]"
+        # )
 
         logging.info(f"AssetManager initialized at: {self.root}\n")
 
@@ -51,19 +58,60 @@ class AssetManager:
 
         return self._index_root  # type: ignore
 
+    @index_root.setter
+    def index_root(self, value: Element):
+        self._index_root = value
+
     def _load_index(self):
         # Load Package/index
         # if self.index_root is None:
-        self._index_root = et.fromstring(
+        self.index_root = et.fromstring(
             IndexFileHelper.load_index(self.index_file), parser
         )
-        if self._index_root is None:
+        if self.index_root is None:
             raise ValueError("Index is empty: Package/index not found or corrupted.")
 
         # Save a human-readable copy to Data/index.xml for reference
-        self._write_xml_to_data_dir(self._index_root)
+        self._write_xml_to_data_dir(self.index_root)
 
         logging.info(f"Loaded index from: {self.index_file}")
+
+    def _backup_index(self):
+        logging.info("Backing up Index...")
+
+        if not Utils.should_copy(self.index_file_backup, self.index_file):
+            logging.warning("Already exists and not different. Skip.")
+            return
+
+        self._load_index()
+
+        if self._xpath_has_data_pack(self.index_root):
+            logging.warning("'../Data/' in packs. Index may not be original. Skip.")
+            return
+
+        shutil.copy2(self.index_file, self.index_file_backup)
+        logging.info(f"Done! {self.index_file_backup}")
+
+    def restore_index(self):
+        logging.info("Restoring Index...")
+
+        if not os.path.exists(self.index_file_backup):
+            logging.warning("Backup file not found. Skip.")
+            return
+
+        if not Utils.should_copy(self.index_file_backup, self.index_file):
+            logging.warning("Not different from backup. Skip.")
+            return
+
+        # must reload index
+        self._load_index()
+
+        if not self._xpath_has_data_pack(self.index_root):
+            logging.warning("No '../Data/' in packs. Index may be original. Skip.")
+            return
+
+        shutil.copy2(self.index_file_backup, self.index_file)
+        logging.info("Index restored.")
 
     def _write_xml_to_data_dir(self, xml_root: Element):
         data_index_xml_file = os.path.join(self.data_path, "index.xml")
@@ -78,7 +126,7 @@ class AssetManager:
 
     def _save_index(self, mod_index_xml: Optional[Element] = None) -> None:
         if mod_index_xml is None:
-            mod_index_xml = self._index_root
+            mod_index_xml = self.index_root
         if mod_index_xml is None:
             raise ValueError("Index is empty.")
 
@@ -177,6 +225,7 @@ class AssetManager:
 
         return ExtractionStatus.ERROR
 
+    @Utils.log_time("extract_entries")
     def extract_entries(
         self, original_text: Union[str, Set[str]], match_mode: str = "prefix"
     ):
@@ -184,8 +233,6 @@ class AssetManager:
         Extract entries from index where 'original' matches a given list or set.
         match_mode: 'prefix' (default) or 'exact'
         """
-        self._load_index()
-
         if isinstance(original_text, str):
             targets = {
                 p.strip().replace("\\", "/")
@@ -200,11 +247,42 @@ class AssetManager:
         if not targets:
             return
 
+        self._backup_index()
+
         logging.info("Searching for extract...")
         entries_to_extract: List[Tuple[Element, str, str]] = []
 
         counters = {status: 0 for status in ExtractionStatus}
         index_modified = False
+
+        # # use xpath, but not faster so much and not cache, second run will slower a lot
+        # if match_mode == "exact":
+        #     for t in list(targets):
+        #         found = self._xpath_entry_by_original(self.index_root, target=t)
+        #         if found:
+        #             entry = found[0]
+        #             pack = entry.get("pack")
+        #             if pack:
+        #                 if os.path.basename(pack) != os.path.basename(t):
+        #                     entries_to_extract.append((entry, t, pack))
+        #                 else:
+        #                     logging.debug(f"{t} already extracted")
+        #             targets.discard(t)
+        #
+        #     # if targets:  # some not found
+        #     #     logging.warning(f"{len(targets)} files not found in index: {targets}")
+        #
+        # elif match_mode == "prefix":
+        #     for t in targets:
+        #         found = self._xpath_entry_startswith_original(self.index_root, target=t)
+        #         for entry in found:
+        #             original = entry.get("original")
+        #             pack = entry.get("pack")
+        #             if original and pack:
+        #                 if os.path.basename(pack) != os.path.basename(original):
+        #                     entries_to_extract.append((entry, original, pack))
+        #                 else:
+        #                     logging.debug(f"{original} already extracted")
 
         for entry in self.index_root:
             original = entry.get("original")
@@ -280,7 +358,7 @@ class AssetManager:
             logging.info(f"{extracted_count} entries extracted.")
 
         if index_modified:
-            self._save_index(self._index_root)
+            self._save_index(self.index_root)
             if identical > 0:
                 logging.info(
                     f"{identical} identical entries skipped; their path updated to 'data'."
