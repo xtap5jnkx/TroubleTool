@@ -39,14 +39,15 @@ python TroubleTool.py
 
 ## Extracting Files
 
-* **Backup** `Game_folder/Package/index`. Remember restore the original before installing or creating patches.
 * Extracts specific files (e.g. `CEGUI/datafiles/lua_scripts`, `script`, `stage`, `xml`).
-* Extracted files go into `Game_folder/Data`, and their path the index file is updated to point there.
+* Extracted files go into `Game_folder/Data`, and their path in the index file is updated to point there.
+* Auto index backup before extract.
+	* Index backup is only created if no `../Data/` in packs.
+	* Index restore is only triggered if `../Data/` in packs.
 * **auto-extraction** when install/create patch:
-
-  * If a mod has no `.py` files, the tool auto-extracts required files.
-  * If `.py` files exist, use auto-extracts text box.
-  * To disable this, clear the auto-extract text box in the Mod Manager.
+	* If a mod has no `.py` files, the tool auto-extracts required files.
+	* If `.py` files exist, use auto-extracts text box.
+	* To disable this, clear the auto-extract text box in the Mod UI.
 
 ---
 
@@ -93,8 +94,7 @@ The tool applies mods **in order**. Mods later in the list have higher priority 
 
 * The tool creates patch files for your mod files, converting them into reusable `.py` scripts. Patch files created by the tool are simple by default. You can edit them manually or ask an AI assistant to improve and optimize the code.
 * Keep `.zip` backups of mods — patch creation removes old files.
-* Patches contain only changes, converting `.xml`, `.lua`, `.dkm` to `.py`.
-  `.dic` → strips unchanged lines.
+* Patches contain only changes, converting `.xml`, `.lua`, `.dkm` to `.py`. `.dic` → strips unchanged lines.
 * If the tool generates very long patch code, you can use AI assistants (e.g., ChatGPT, Bard) to help shorten or simplify it while keeping the same functionality.
 
 Example — **changing all item prices in `xml/Shop.xml`**:
