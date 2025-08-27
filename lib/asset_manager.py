@@ -83,8 +83,6 @@ class AssetManager:
             logging.warning("Already exists and not different. Skip.")
             return
 
-        self._load_index()
-
         if self._xpath_has_data_pack(self.index_root):
             logging.warning("'../Data/' in packs. Index may not be original. Skip.")
             return
@@ -247,6 +245,7 @@ class AssetManager:
         if not targets:
             return
 
+        self._load_index()
         self._backup_index()
 
         logging.info("Searching for extract...")
