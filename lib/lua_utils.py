@@ -263,11 +263,20 @@ class LuaUtils:
 
         self.base_map.update(merged_map)
 
-    def _get_code_from_args(self, code: Optional[str], from_file: Optional[str]):
-        if not code and not from_file:
-            raise ValueError("Either code or from_file must be provided.")
-        if code and from_file:
-            raise ValueError("Provide either code or from_file, not both.")
+    def _get_code_from_args(
+        self,
+        code: Optional[str],
+        from_file: Optional[str],
+        allow_empty: bool = False,
+        label: str = "code",
+    ):
+        if code is None and not from_file:
+            raise ValueError(f"Either {label} or from_file must be provided.")
+        if code is not None and from_file:
+            raise ValueError(f"Provide either {label} or from_file, not both.")
+
+        if code == "" and not allow_empty:
+            raise ValueError(f"{label} cannot be empty.")
 
         if from_file:
             return self._read_from_file(from_file)
@@ -302,7 +311,7 @@ class LuaUtils:
             raise ValueError(f"'{def_name}' not found")
         if old_code not in def_block_code:
             raise ValueError(rf"'{old_code}' not found in '{def_name}'")
-        code_to_replace = self._get_code_from_args(new_code, from_file)
+        code_to_replace = self._get_code_from_args(new_code, from_file, True, "new_code")
         self.base_map[def_name] = def_block_code.replace(
             old_code, code_to_replace, count
         )
