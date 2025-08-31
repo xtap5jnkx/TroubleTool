@@ -127,10 +127,10 @@ def patch(game_files):
 	script = game_files.script("script/server/ability.lua")
 
 	script.replace_code(
-		def_name="function AbilityUseableCheck_Tame",
-		old_code="""if target and not IsDead(target) then
+		def_name = "function AbilityUseableCheck_Tame",
+		old_code = """if target and not IsDead(target) then
 			return 'Hide';""",
-		new_code="""if target and not IsDead(target) then
+		new_code = """if target and not IsDead(target) then
 			return; -- rex mod""",
 		# from_file = "test", # use code from lua/test.lua
 		count = 1 # replace only first found, -1: default, replace all found
@@ -198,12 +198,12 @@ def add_ap_on_robbery(game_files):
 	# Editing scripts
 	script = game_files.script("script/server/mastery_AbilityUsed_events.lua")
 	script.insert_code(
-		def_name="function Mastery_Rob_AbilityUsed",
-		target="InsertBuffActions(actions, owner, owner, mastery.Buff.name, 1, true);",
+		def_name = "function Mastery_Rob_AbilityUsed",
+		target = "InsertBuffActions(actions, owner, owner, mastery.Buff.name, 1, true);",
 		# code = r"""...""",
-		from_file="ViciousRobber",
-		position="after", # or "before"
-		count=1
+		from_file = "ViciousRobber",
+		position = "after", # or "before"
+		count = 1
 	)
 
 def patch(game_files):
@@ -216,6 +216,22 @@ def patch(game_files):
 	if mastery_EvilRobber then
 		AddActionRestoreActions(actions, owner);
 	end
+```
+
+---
+
+**Remove code**
+
+```python
+def patch(game_files):
+	rem = game_files.script("script/foo.lua")
+
+	rem.replace_code(
+		def_name = "function foo",
+		old_code = """print("hello world");""",
+		new_code = "",
+		count = 1
+	)
 ```
 
 ---
