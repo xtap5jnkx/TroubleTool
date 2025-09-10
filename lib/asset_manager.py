@@ -223,7 +223,6 @@ class AssetManager:
 
         return ExtractionStatus.ERROR
 
-    @Utils.log_time("extract_entries")
     def extract_entries(
         self, original_text: Union[str, Set[str]], match_mode: str = "prefix"
     ):
