@@ -1,5 +1,6 @@
 import filecmp
 import hashlib
+import importlib.util
 import os
 import sys
 import threading
@@ -159,3 +160,55 @@ class Utils:
                 return f.read() != source_bytes
         except Exception:
             return True
+
+    # this version cache module to reuse
+    # @staticmethod
+    # def load_module_from_filepath(file_path: str):
+    #     """
+    #     Load a Python module directly from a file path.
+    #     Avoids name collisions when files share the same basename.
+    #     """
+    #     module_name = os.path.splitext(os.path.basename(file_path))[0]
+    #     # Create a unique name based on the relative path
+    #     unique_name = f"{module_name}_{abs(hash(os.path.abspath(file_path)))}"
+
+    #     spec = importlib.util.spec_from_file_location(unique_name, file_path)
+    #     if spec is None or spec.loader is None:
+    #         raise ImportError(f"Could not load spec for {file_path}")
+
+    #     module = importlib.util.module_from_spec(spec)
+    #     sys.modules[unique_name] = module
+    #     spec.loader.exec_module(module)
+    #     return module
+
+    @staticmethod
+    def load_module_from_filepath(file_path: str):
+        """
+        Load a Python module directly from its absolute file path.
+        Does not insert into sys.modules.
+        """
+        # name=None → no sys.modules entry. error.
+        # name="". not work
+        # Generate a unique name from path
+        # unique_name = f"_dynamic_{abs(hash(os.path.abspath(file_path)))}"
+        unique_name = f"_dynamic_{abs(hash(file_path))}"
+
+        spec = importlib.util.spec_from_file_location(unique_name, file_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not load spec for {file_path}")
+
+        # spec.loader:
+        # The loader is an object that knows how to actually load/execute the module.
+        # When you call importlib.util.spec_from_file_location, Python builds a module spec (metadata: where the file is, how to load it).
+        # spec.loader is usually a SourceFileLoader (for .py files).
+
+        # This creates a blank module object (like an empty box).
+        # It has a __dict__, but no code has run yet.
+        # At this point, module.__name__, module.__file__, etc. are set, but the functions/variables aren’t there.
+        module = importlib.util.module_from_spec(spec)
+
+        # This is where the actual code in the file is executed inside that module’s namespace.
+        # After this step, module has all its functions, classes, and variables defined.
+        spec.loader.exec_module(module)
+
+        return module

@@ -1,4 +1,4 @@
-import importlib
+# import importlib
 import os
 import runpy
 import shutil
@@ -221,7 +221,9 @@ class ModUtils:
         self._write_all_files()
         with Utils.temp_sys_path(mod_dir):
             try:
-                main_py = importlib.import_module("main")
+                file_path = os.path.join(mod_dir, "main.py")
+                # main_py = importlib.import_module("main")
+                main_py = Utils.load_module_from_filepath(file_path)
                 if hasattr(main_py, "settings"):
                     setattr(main_py.settings, "GAME_FOLDER", self.am.root)
 
@@ -242,10 +244,11 @@ class ModUtils:
 
     def _patch(self, mod_file: str):
         logging.info(f"Running patch: {mod_file}")
-        module_name = os.path.splitext(os.path.basename(mod_file))[0]
+        # module_name = os.path.splitext(os.path.basename(mod_file))[0]
         with Utils.temp_sys_path(os.path.dirname(mod_file)):
             try:
-                mod = importlib.import_module(module_name)
+                # mod = importlib.import_module(module_name)
+                mod = Utils.load_module_from_filepath(mod_file)
                 if not hasattr(mod, "patch"):
                     logging.warning(f"No 'patch' function in {mod_file}")
                     return
