@@ -44,21 +44,25 @@ class ModUtils:
         self.lua = self.script
 
     def xml(self, rel_path: str, file_path=None):
-        rel_path = os.path.normpath(rel_path)
-        xml_util = self.xmls.get(rel_path)
-        if xml_util:
-            return xml_util
-        ext = os.path.splitext(rel_path)[1]
-        first_dir = rel_path.split(os.sep, 1)[0]
+        norm_rel_path = os.path.normpath(rel_path)
+        ext = os.path.splitext(norm_rel_path)[1]
+        first_dir = norm_rel_path.split(os.sep, 1)[0]
+
         if not ext:
             ext_map = {"xml": ".xml", "stage": ".stage", "Dictionary": ".dkm"}
             if ext := ext_map.get(first_dir):
-                rel_path += ext
+                norm_rel_path += ext
+
+        xml_util = self.xmls.get(norm_rel_path)
+        if xml_util:
+            return xml_util
+
         if not file_path:
             base_dir = self.am.root if first_dir == "Dictionary" else self.am.data_path
-            file_path = os.path.join(base_dir, rel_path)
+            file_path = os.path.join(base_dir, norm_rel_path)
+
         xml_util = XmlUtils(file_path)
-        self.xmls[rel_path] = xml_util
+        self.xmls[norm_rel_path] = xml_util
         return xml_util
 
     def _get_util(
