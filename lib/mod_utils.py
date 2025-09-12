@@ -70,19 +70,20 @@ class ModUtils:
         default_ext: str,
         base_dir: str,
     ):
-        rel_path = os.path.normpath(rel_path)
-        util = cache.get(rel_path)
+        norm_rel_path = os.path.normpath(rel_path)
+
+        if not os.path.splitext(norm_rel_path)[1]:
+            norm_rel_path += default_ext
+
+        util = cache.get(norm_rel_path)
         if util:
             return util
 
-        if not os.path.splitext(rel_path)[1]:
-            rel_path += default_ext
-
         if not file_path:
-            file_path = os.path.join(base_dir, rel_path)
+            file_path = os.path.join(base_dir, norm_rel_path)
 
         util = util_class(file_path)
-        cache[rel_path] = util
+        cache[norm_rel_path] = util
         return util
 
     def script(self, rel_path: str, file_path=None):

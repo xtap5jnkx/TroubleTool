@@ -1,6 +1,8 @@
+import sys
+sys.dont_write_bytecode = True
+
 import os
 import subprocess
-import sys
 from typing import Optional
 
 # Conditional import for winreg (Windows only)
