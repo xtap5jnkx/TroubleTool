@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 from xml.sax.saxutils import quoteattr
 
@@ -111,11 +112,16 @@ class XmlUtils:
         self._clear_changes()
         return 1
 
-    def _get_element_key(self, element: Element):
+    def _get_element_identifier(self, element: Element):
         """
-        Generates a unique key for an element based on its tag and its first attribute.
-        Returns a tuple: (tag, first_attribute_key, first_attribute_value).
+        Generates a unique identifier for an element.
+        - If the element has a "Key" attribute, return (tag, "Key", value).
+        - Otherwise, use the first attribute (or (None, None) if no attributes).
+        Returns a tuple: (tag, attribute_name, attribute_value).
         """
+        if "Key" in element.attrib:
+            return (element.tag, "Key", element.attrib["Key"])
+
         first_attr_pair = next(iter(element.attrib.items()), (None, None))
         return (element.tag, first_attr_pair[0], first_attr_pair[1])
 
@@ -124,11 +130,13 @@ class XmlUtils:
         # elements = path if current is None else path + [current]
         segments = []
         # for elem in elements:
-        for elem in path:
-            tag = elem.tag
-            key_attr = next(iter(elem.attrib.items()), None)
-            if key_attr:
-                k, v = key_attr
+        for element in path:
+            tag = element.tag
+            # ele_id = next(iter(element.attrib.items()), None)
+            ele_id = self._get_element_identifier(element)
+            if ele_id[1]:
+                # k, v = ele_id
+                t, k, v = ele_id
                 if "'" in v:
                     segments.append(f'{tag}[@{k}="{v}"]')
                 else:
@@ -166,8 +174,11 @@ class XmlUtils:
         parent.append(et.Comment(f" {comment_text} "))
 
     def _handle_new_element(
-        self, parent: Element, new_element: Element, path_to_parent: list[Element]
+        self, parent: Element, new_element: Element, path_to_parent: list[Element], ext
     ):
+        if ext == ".stage" and (new_element.tag == "Action" or any(e.tag == "Action" for e in path_to_parent)):
+            return
+
         if self.is_create_patch is None:
             parent.append(new_element)
             return
@@ -189,8 +200,11 @@ class XmlUtils:
             self._change_index[key] = change
 
     def _handle_updated_attributes(
-        self, target: Element, source: Element, path_to_target: list[Element]
+        self, target: Element, source: Element, path_to_target: list[Element], ext
     ):
+        if ext == ".stage" and any(e.tag == "Action" for e in path_to_target):
+            return
+
         if self.is_create_patch is None:
             target.attrib.update(source.attrib)
             return
@@ -207,7 +221,7 @@ class XmlUtils:
             )
 
     def _merge_elements(
-        self, target_root: Element, source_root: Element, base_path: list[Element]
+        self, target_root: Element, source_root: Element, base_path: list[Element], ext
     ):
         stack = [
             (target_root, source_root, list(base_path))
@@ -217,7 +231,7 @@ class XmlUtils:
             tgt_elem, src_elem, path = stack.pop()
 
             tgt_children_index = {
-                self._get_element_key(child): child
+                self._get_element_identifier(child): child
                 for child in tgt_elem
                 if not isinstance(child, Comment)
             }
@@ -226,16 +240,16 @@ class XmlUtils:
                 if isinstance(src_child, Comment):
                     continue
 
-                src_key = self._get_element_key(src_child)
-                tgt_child = tgt_children_index.get(src_key)
+                ele_id = self._get_element_identifier(src_child)
+                tgt_child = tgt_children_index.get(ele_id)
 
-                attrib_key = src_key[1]
-                not_unique = not attrib_key or attrib_key[0].isupper()
+                attrib_name = ele_id[1]
+                not_unique = not attrib_name or (attrib_name != "Key" if ext == ".stage" else attrib_name[0].isupper())
 
                 if tgt_child is None:
                     if not_unique:
                         continue
-                    self._handle_new_element(tgt_elem, src_child, path)
+                    self._handle_new_element(tgt_elem, src_child, path, ext)
                     continue
 
                 current_path = path + [tgt_child]
@@ -249,7 +263,7 @@ class XmlUtils:
                 if tgt_child.attrib == src_child.attrib:
                     continue
 
-                self._handle_updated_attributes(tgt_child, src_child, current_path)
+                self._handle_updated_attributes(tgt_child, src_child, current_path, ext)
 
     def merge_with(self, update_file: str, is_create_patch: Optional[bool]):
         update_tree = et.parse(update_file, parser=parser)
@@ -265,11 +279,11 @@ class XmlUtils:
 
         self.is_create_patch = is_create_patch
         self._clear_changes()
-        self._merge_elements(self.root, update_root, [])
+        self._merge_elements(self.root, update_root, [], os.path.splitext(update_file)[1])
 
     # def _merge_elements_recurse(self, target: Element, source: Element, path: list):
     #     target_children_index = {
-    #         self._get_element_key(child): child
+    #         self._get_element_identifier(child): child
     #         for child in target
     #         if not isinstance(child, Comment)
     #     }
@@ -277,7 +291,7 @@ class XmlUtils:
     #         if isinstance(src_child, Comment):
     #             continue
     #
-    #         src_key = self._get_element_key(src_child)
+    #         src_key = self._get_element_identifier(src_child)
     #         tgt_child = target_children_index.get(src_key)
     #
     #         attrib_key = src_key[1]
