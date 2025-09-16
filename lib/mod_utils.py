@@ -275,6 +275,19 @@ class ModUtils:
             logging.error(f"{e}")
         logging.info(f"Copied '{mod_file}' to '{base_file}'")
 
+    # def _convert_whole_file_to_py(self, base_file, mod_file):
+    #     # not work, because base_file not same in all pc
+    #     with open(mod_file, "r", encoding="utf-8") as f:
+    #         txt = f.read()
+
+    #     py_file = os.path.splitext(mod_file)[0] + ".py"
+    #     txt = txt if txt.endswith("\n") else txt + "\n"
+
+    #     content = f'def patch():\n\ttxt = r"""{txt}"""\n\n\twith open("{base_file}", "w", encoding="utf-8") as f:\n\t\tf.write(txt)\n'
+
+    #     with open(py_file, "w", encoding="utf-8") as f:
+    #         f.write(content)
+
     def _merge(
         self,
         FileHandlerCls: type[XmlUtils | LuaUtils | DicUtils],
@@ -288,21 +301,22 @@ class ModUtils:
             file_handle = handler_getter(rel_path, base_file)
 
             file_handle.merge_with(mod_file, is_create_patch)
-            if is_create_patch is None:
+            if not is_create_patch:
                 return
             if isinstance(file_handle, DicUtils):
                 rs = file_handle.create_patch(mod_file)
             else:
                 py_file = os.path.splitext(mod_file)[0] + ".py"
                 rs = file_handle.create_patch(py_file, rel_path)
-                os.remove(mod_file)
+                if rs != 2:
+                    os.remove(mod_file)
                 if rs == 3:
-                    logging.debug(f"{py_file} not change, skip")
+                    logging.debug(f"{py_file} not change")
                     return
 
             log_map = {
                 1: lambda: logging.info(f"Rewritten {mod_file}"),
-                2: lambda: logging.debug(f"{mod_file} make no changes"),
+                2: lambda: logging.debug(f"{mod_file} make no changes, skip"),
                 3: lambda: logging.debug(f"{mod_file} not change, skip"),
             }
 
@@ -317,11 +331,11 @@ class ModUtils:
         original_cwd = os.getcwd()
 
         for mod_name, mod_data in mod_file_map.items():
-            if is_create_patch is None:
+            if not is_create_patch:
                 os.chdir(mod_data.mod_data_path)
 
             if mod_data.has_main_py:
-                if is_create_patch is None:
+                if not is_create_patch:
                     logging.debug(f"Running main.py in mod: {mod_name}")
                     self._patch_main(mod_data.mod_data_path)
                 continue
@@ -334,7 +348,7 @@ class ModUtils:
                 extension = os.path.splitext(mod_file)[1]
 
                 if extension == ".py":
-                    if is_create_patch is None:
+                    if not is_create_patch:
                         self._patch(mod_file)
                     continue
 
@@ -343,12 +357,21 @@ class ModUtils:
                     if extension in (".dic", ".dkm")
                     else os.path.join(self.am.data_path, rel_path)
                 )
-                if extension == ".stage":
-                    if is_create_patch is None:
+
+                if (not os.path.exists(base_file)):
+                    if not is_create_patch:
                         self._override(base_file, mod_file)
+                    else:
+                        logging.debug(f"{base_file} not exists, skip")
                     continue
 
+                # if extension == ".stage":
+                #     if not is_create_patch:
+                #         self._override(base_file, mod_file)
+                #     continue
+
                 handler_map = {".dic": DicUtils, ".lua": LuaUtils}
+                # other files handle as xml
                 FileHandlerCls = handler_map.get(extension, XmlUtils)
 
                 self._merge(
@@ -358,7 +381,7 @@ class ModUtils:
             # with ThreadPoolExecutor() as executor:
             #     executor.map(process_file, mod_data.relative_paths)
 
-        if is_create_patch is None:
+        if not is_create_patch:
             logging.info("Save changes...")
             os.chdir(original_cwd)
             self._write_all_files()
@@ -371,7 +394,7 @@ class ModUtils:
 
         auto_extract_files = config_utils.load_auto_extract_files()
         if auto_extract_files:
-            if quick_extract and is_create_patch is None:
+            if quick_extract and not is_create_patch:
                 self.am.extract_entries(auto_extract_files)
             elif extract_paths:
                 self.am.extract_entries(extract_paths, "exact")
