@@ -44,10 +44,14 @@ def summarize_diff(a: List[str], b: List[str]) -> List[Dict[str, str]]:
             # result.append(f'removed """{old_block}"""')
 
         elif tag == "insert":
-            prev_context = a[i2 - 1]
-            next_context = "".join(b[j2:j2+1]).rstrip()
-            old_block = prev_context + next_context
+            prev_context = a[i1 - 1]
+            next_context = a[i2].rstrip()
+            old_block = "".join(a[i1-1:i2+1]).rstrip()
             new_block = prev_context + "".join(b[j1:j2]) + next_context
+            # prev_context = a[i2 - 1]
+            # next_context = "".join(b[j2:j2+1]).rstrip()
+            # old_block = prev_context + next_context
+            # new_block = prev_context + "".join(b[j1:j2]) + next_context
 
             result.append({
                 "type": "replace",
@@ -56,21 +60,35 @@ def summarize_diff(a: List[str], b: List[str]) -> List[Dict[str, str]]:
             })
             # result.append(f'insert, replace "{old_block}" with "{new_block}"')
 
+        # include prev line + next line for prevent short code like `end`
         elif tag == "replace":
-            # old_lines = [line.rstrip("\n") for line in a[i1:i2]]
-            # new_lines = [line.rstrip("\n") for line in b[j1:j2]]
+            new_block = "".join(b[j1:j2])
+            strip_block = new_block.strip()
 
-            # old_block = "\n".join(old_lines)
-            # new_block = "\n".join(new_lines)
-
-            old_block = "".join(a[i1:i2]).rstrip()
-            new_block = "".join(b[j1:j2]).rstrip()
+            if len(strip_block) < 33:
+                prev_context = a[i1 - 1]
+                next_context = a[i2].rstrip()
+                old_block = "".join(a[i1-1:i2+1]).rstrip()
+                new_block = prev_context + new_block + next_context
+            else:
+                old_block = "".join(a[i1:i2]).rstrip()
+                new_block = new_block.rstrip()
 
             result.append({
                 "type": "replace",
                 "old": old_block,
                 "new": new_block,
             })
+
+            # old_lines = [line.rstrip("\n") for line in a[i1:i2]]
+            # new_lines = [line.rstrip("\n") for line in b[j1:j2]]
+
+            # old_block = "\n".join(old_lines)
+            # new_block = "\n".join(new_lines)
+
+            # old_block = "".join(a[i1:i2]).rstrip()
+            # new_block = "".join(b[j1:j2]).rstrip()
+
             # result.append(f'replaced:\nr"""{old_block}"""\nwith:\nr"""{new_block}"""')
 
             # old_block = "\n".join(f'"{ol}"' for ol in old_lines)
