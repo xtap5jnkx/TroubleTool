@@ -1,29 +1,49 @@
 import logging
 import os
 from collections import defaultdict, deque
-from typing import Optional
+from typing import DefaultDict, Dict, List, Optional, Set, Tuple
 
 from lib import re_utils
+from lib.difflib_utils import summarize_diff
 from lib.utils import Utils
+
+templates = {
+    "delete": '''
+\tscript.delete_code(
+\t\tdef_name="{name}",
+\t\told_code=r"""{old}""",
+\t\tcount=1
+\t)
+''',
+    "replace": '''
+\tscript.replace_code(
+\t\tdef_name="{name}",
+\t\told_code=r"""{old}""",
+\t\tnew_code=r"""{new}""",
+\t\tcount=1
+\t)
+''',
+}
 
 
 class LuaUtils:
     def __init__(self, file_path: str):
         self.file_path = file_path
         self._raw_code: Optional[str] = None
-        self._base_map: Optional[dict[str, str]] = None
-        self._original_map: Optional[dict[str, str]] = None
-        self._changes: dict[str, list[tuple[str, str]]] = {}
+        self._base_map: Optional[Dict[str, str]] = None
+        self._original_map: Optional[Dict[str, str]] = None
+        self._changes: Dict[str, List[Tuple[str, str]]] = {}
+        self._diffs: Dict[str, List[Dict[str, str]]] = {}
         self.read()
 
     @property
-    def base_map(self) -> dict[str, str]:
+    def base_map(self) -> Dict[str, str]:
         if not self._base_map:
             raise ValueError("Lua base_map not initialized")
         return self._base_map
 
     @base_map.setter
-    def base_map(self, value: dict[str, str]):
+    def base_map(self, value: Dict[str, str]):
         self._base_map = value
 
     def read(self):
@@ -61,21 +81,20 @@ class LuaUtils:
         if not self._changes:
             return 2
         rel_path = relative_path.replace("\\", "/")
-        action_map = {"new": "add_definition", "update": "replace_definition"}
         change_blocks = [
             f'def patch(game_files):\n\tscript = game_files.script("{rel_path}")\n'
         ]
 
-        for change_type, items in self._changes.items():
-            func_name = action_map.get(change_type)
-            # if not items or not func_name:
-            #     continue
-
-            change_blocks.extend(
-                # use raw code for escape special characters like `\n`
-                f'\n\tscript.{func_name}("{name}", r"""{code}""")\n'
-                for name, code in items
+        for name, code in self._changes.get("new", []):
+            change_blocks.append(
+                f'\n\tscript.add_definition("{name}", r"""{code}""")\n'
             )
+
+        # Handle "update" changes with diffs
+        for name, diffs in self._diffs.items():
+            for diff in diffs:
+                change_blocks.append(templates[diff["type"]].format(name=name, **diff))
+
         content = "".join(change_blocks)
 
         if not Utils.should_write(content, fileout):
@@ -88,10 +107,13 @@ class LuaUtils:
         return 1
 
     @staticmethod
-    def _extract_definitions(raw_code: str) -> dict[str, str]:
-        blocks = re_utils.COMMENT.sub("", raw_code)
+    def _extract_definitions(txt: str) -> Dict[str, str]:
+        # remove empty lines
+        blocks = "\n".join(line for line in txt.splitlines() if line.strip())
+        blocks = re_utils.COMMENT.sub("", blocks)
         blocks = re_utils.DEF.split(blocks)
-        definitions: dict[str, str] = {}
+        definitions: Dict[str, str] = {}
+
         for block in blocks:
             clean_block = block.strip()
             if not clean_block:
@@ -119,12 +141,12 @@ class LuaUtils:
 
     @staticmethod
     def _build_identifier_map(
-        items: dict[str, str],
-    ) -> tuple[dict[str, str], dict[str, set[str]], dict[str, int]]:
+        items: Dict[str, str],
+    ) -> Tuple[Dict[str, str], Dict[str, Set[str]], Dict[str, int]]:
         """Builds maps for identifiers and initializes in-degree counts."""
-        identifier_map: dict[str, str] = {}
-        split_keys: dict[str, set[str]] = {}
-        in_degree: dict[str, int] = {key: 0 for key in items}
+        identifier_map: Dict[str, str] = {}
+        split_keys: Dict[str, Set[str]] = {}
+        in_degree: Dict[str, int] = {key: 0 for key in items}
 
         # Map each individual identifier to the composite key that defines it.
         # e.g., {'fa': 'fa,haha,tata', 'haha': 'fa,haha,tata', ...}
@@ -152,10 +174,10 @@ class LuaUtils:
 
     @staticmethod
     def _find_key_dependencies(
-        items: dict[str, str],
-        identifier_map: dict[str, str],
-        in_degree: dict[str, int],
-        reverse_graph: defaultdict[str, set],
+        items: Dict[str, str],
+        identifier_map: Dict[str, str],
+        in_degree: Dict[str, int],
+        reverse_graph: DefaultDict[str, Set],
     ):
         """Finds dependencies from definition keys (e.g., `obj.method` depends on `obj`)."""
         for key in items:
@@ -187,7 +209,7 @@ class LuaUtils:
                     reverse_graph[obj_name].add(key)
                     seen.add(obj_name)
 
-    def _resolve_dependency_order(self, items: dict[str, str]) -> list[str]:
+    def _resolve_dependency_order(self, items: Dict[str, str]) -> List[str]:
         """
         Given a dict of items {key: value}, where values may reference other keys,
         returns a list of keys sorted so that dependencies appear before dependents.
@@ -235,7 +257,7 @@ class LuaUtils:
 
         return sorted_order
 
-    def _find_changes(self, update_map: dict[str, str]):
+    def _find_changes(self, update_map: Dict[str, str]):
         changes = defaultdict(list)
         for key, value in update_map.items():
             if key not in self.base_map:
@@ -252,7 +274,14 @@ class LuaUtils:
         update_map = LuaUtils._extract_definitions(update_raw_code)
         self._changes = self._find_changes(update_map)
 
-        if not self._changes or is_create_patch:
+        if not self._changes:
+            return
+
+        if is_create_patch:
+            for key, value in self._changes["update"]:
+                old_lines = self.base_map[key].splitlines(keepends=True)
+                new_lines = value.splitlines(keepends=True)
+                self._diffs[key] = summarize_diff(old_lines, new_lines)
             return
 
         merged_map = {}
@@ -304,17 +333,22 @@ class LuaUtils:
         old_code: str,
         new_code: Optional[str] = None,
         from_file: Optional[str] = None,
-        count: int = -1,
+        count=-1,
     ):
         def_block_code = self.base_map.get(def_name)
         if not def_block_code:
             raise ValueError(f"'{def_name}' not found")
         if old_code not in def_block_code:
             raise ValueError(rf"'{old_code}' not found in '{def_name}'")
-        code_to_replace = self._get_code_from_args(new_code, from_file, True, "new_code")
+        code_to_replace = self._get_code_from_args(
+            new_code, from_file, True, "new_code"
+        )
         self.base_map[def_name] = def_block_code.replace(
             old_code, code_to_replace, count
         )
+
+    def delete_code(self, def_name: str, old_code: str, count=-1):
+        self.replace_code(def_name, old_code, "", count=count)
 
     def insert_code(
         self,
