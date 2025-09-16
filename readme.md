@@ -73,10 +73,12 @@ Game_folder/Mods/ModName/Data/[xml|script|...]
 
 The tool applies mods **in order**. Mods later in the list have higher priority and their changes override earlier ones when conflicts occur.
 
+So lazy to update this, create patch first (convert xml, lua, stage, dkm files to py files) then install.
+
 ### File handling:
 
 * **`.xml`** → merges unique elements (identified by first attribute, key in normal case).
-* **`.stage`** (XML format) → no merge, direct copy to `Game_folder/Data/stage`.
+* **`.stage`** (XML format) → merge unique elements (identified by attribute name "Key" and not relative to "Action" tag).
 * To modify all elements in `.xml` or `.stage` files, create a `.py` patch script and use XPath to select the elements you want to change.
 * **`.lua`** → merges/adds top-level function & variable definitions with simple topological sorting for dependencies.
 * **`Dictionary`** → merges into `Game_folder/Dictionary`.
@@ -92,9 +94,9 @@ The tool applies mods **in order**. Mods later in the list have higher priority 
 
 ## Creating Patches
 
-* The tool creates patch files for your mod files, converting them into reusable `.py` scripts. Patch files created by the tool are simple by default. You can edit them manually or ask an AI assistant to improve and optimize the code.
+* Convert lua, xml, dkm, stage files to python files. Patch files created by the tool are simple by default. You can edit them manually or ask an AI assistant to improve and optimize the code.
 * Keep `.zip` backups of mods — patch creation removes old files.
-* Patches contain only changes, converting `.xml`, `.lua`, `.dkm` to `.py`. `.dic` → strips unchanged lines.
+* Patches contain only changes, converting `.xml`, `.lua`, `.dkm`, `.stage` to `.py`. `.dic` → strips unchanged lines.
 * If the tool generates very long patch code, you can use AI assistants (e.g., ChatGPT, Bard) to help shorten or simplify it while keeping the same functionality.
 
 Example — **changing all item prices in `xml/Shop.xml`**:
@@ -116,7 +118,7 @@ def patch(game_files):
 
 ### Lua Patch
 
-* For `.lua` files, the patch generator will only produce either `add_definition` (new function/variable) or `replace_definition` (modified one). Both behave the same — they add the definition if it doesn’t exist, otherwise they replace it.
+* For `.lua` files, the patch generator will only produce either `add_definition` (new function/variable), `delete_code` or `replace_code`. `add_definition` add the definition if it doesn’t exist, otherwise they replace it.
 * But for large Lua definitions, it’s often better to **replace only specific code blocks** or **insert new code**, rather than replacing the entire definition:
 
 **Replace code:**
@@ -151,7 +153,7 @@ def patch(game_files):
 
 * Use triple quotes (`"""..."""`) for multi-line code blocks.
 * Preserve **tab characters** for indentation — the tool relies on exact formatting to locate code.
-* If your editor uses spaces, convert them to tabs (`Convert spaces to tabs`) before saving, or the tool may fail to find the target code.
+* If your editor uses spaces, convert them to tabs (`Indentation: Convert to tabs`) before saving, or the tool may fail to find the target code.
 
 * For code with `\n` or special chars, prefix with `r` → `r"""..."""`.
 
@@ -224,14 +226,39 @@ def patch(game_files):
 
 ```python
 def patch(game_files):
-	rem = game_files.script("script/foo.lua")
+	script = game_files.script("script/server/Unit.lua")
 
-	rem.replace_code(
+	script.delete_code(
+		def_name="function GetUnitChallengerMasteries",
+		old_code=r"""				tryCount = tryCount + 1;
+""",
+		count=1
+	)
+```
+
+or:
+
+```python
+def patch(game_files):
+	foo = game_files.script("script/foo.lua")
+
+	foo.replace_code(
 		def_name = "function foo",
 		old_code = """print("hello world");""",
 		new_code = "",
 		count = 1
 	)
+```
+
+---
+
+```python
+def patch(game_files):
+	foo = game_files.script("script/foo.lua")
+
+	foo.add_definition("function foo", """function foo(x, y)
+	return x + y;
+end""")
 ```
 
 ---
