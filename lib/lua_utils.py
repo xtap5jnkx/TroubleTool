@@ -108,8 +108,7 @@ class LuaUtils:
 
     @staticmethod
     def _extract_definitions(txt: str) -> Dict[str, str]:
-        # remove empty lines
-        blocks = "\n".join(line for line in txt.splitlines() if line.strip())
+        blocks = Utils.remove_blank_lines(txt)
         blocks = re_utils.COMMENT.sub("", blocks)
         blocks = re_utils.DEF.split(blocks)
         definitions: Dict[str, str] = {}
@@ -308,10 +307,10 @@ class LuaUtils:
             raise ValueError(f"{label} cannot be empty.")
 
         if from_file:
-            return self._read_from_file(from_file)
+            return Utils.remove_blank_lines(self._read_from_file(from_file))
 
         assert code is not None
-        return code
+        return Utils.remove_blank_lines(code)
 
     def add_definition(self, def_name, code=None, from_file=None):
         if self.base_map.get(def_name):
@@ -338,6 +337,8 @@ class LuaUtils:
         def_block_code = self.base_map.get(def_name)
         if not def_block_code:
             raise ValueError(f"'{def_name}' not found")
+
+        old_code = Utils.remove_blank_lines(old_code)
         if old_code not in def_block_code:
             raise ValueError(rf"'{old_code}' not found in '{def_name}'")
         code_to_replace = self._get_code_from_args(
@@ -370,6 +371,7 @@ class LuaUtils:
         if not block_code:
             raise ValueError(f"'{def_name}' not found.")
         code_to_insert = self._get_code_from_args(code, from_file)
+        target = Utils.remove_blank_lines(target)
 
         parts = []
         limit = offset = pos = 0

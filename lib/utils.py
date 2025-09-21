@@ -212,3 +212,7 @@ class Utils:
         spec.loader.exec_module(module)
 
         return module
+
+    @staticmethod
+    def remove_blank_lines(txt: str) -> str:
+        return "\n".join(line for line in txt.splitlines() if line.strip())
