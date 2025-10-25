@@ -23,8 +23,9 @@ class DicUtils:
         if self._lines == lines:
             return False
 
-        with open(fileout, "w", encoding="utf-8") as f:
-            f.write("".join(lines))
+        content = "".join(lines)
+        with open(fileout, "wb") as f:
+            f.write(content.encode("utf-8"))
         return True
 
     def create_patch(self, fileout: str):
@@ -38,8 +39,9 @@ class DicUtils:
             self._changes.clear()
             return 3
 
-        with open(fileout, "w", encoding="utf-8") as f:
-            f.write("".join(self._changes.values()))
+        content = "".join(self._changes.values())
+        with open(fileout, "wb") as f:
+            f.write(content.encode("utf-8"))
         self._changes.clear()
         self._update_lines.clear()
         return 1

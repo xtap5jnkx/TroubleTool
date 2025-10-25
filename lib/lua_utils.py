@@ -73,8 +73,8 @@ class LuaUtils:
         sorted_keys = self._resolve_dependency_order(self._base_map)
         content = "\n".join(self._base_map[key] for key in sorted_keys) + "\n"
 
-        with open(fileout, "w", encoding="utf-8") as f:
-            f.write(content)
+        with open(fileout, "wb") as f:
+            f.write(content.encode("utf-8"))
         return True
 
     def create_patch(self, fileout: str, relative_path: str):
@@ -101,8 +101,8 @@ class LuaUtils:
             self._changes.clear()
             return 3
 
-        with open(fileout, "w", encoding="utf-8") as f:
-            f.write(content)
+        with open(fileout, "wb") as f:
+            f.write(content.encode("utf-8"))
         self._changes.clear()
         return 1
 
@@ -454,13 +454,13 @@ class LuaUtils:
         #         last_idx = end
 
 
-def main():
-    base_script = LuaUtils("./base.lua")
-    base_script.merge_with("./update.lua")
-    # base_script.insert_code(
-    #     "iac", """	return fa,tata,boo();""", "\tabc", position="after", count=2
-    # )
-    base_script.writeto("./base.lua")
+# def main():
+#     base_script = LuaUtils("./base.lua")
+#     base_script.merge_with("./update.lua")
+#     # base_script.insert_code(
+#     #     "iac", """	return fa,tata,boo();""", "\tabc", position="after", count=2
+#     # )
+#     base_script.writeto("./base.lua")
 
 
 # # sample
