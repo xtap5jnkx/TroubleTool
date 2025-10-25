@@ -132,11 +132,21 @@ class Utils:
 
     @staticmethod
     def file_hash(path):
-        h = hashlib.blake2b()
+        hash_obj = hashlib.blake2b()
         with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b""):
-                h.update(chunk)
-        return h.digest()
+            while chunk := f.read(8192):
+                hash_obj.update(chunk)
+        return hash_obj.digest()
+
+    @staticmethod
+    def compare_file_with_bytes(file_path: str, source: bytes, chunk_size=8192):
+        with open(file_path, "rb") as f:
+            while chunk := f.read(chunk_size):
+                source_chunk = source[:len(chunk)]  # Slice the source bytes to match the chunk size
+                if chunk != source_chunk:
+                    return False  # Files differ at this chunk
+                source = source[len(chunk):]  # Remove the matched chunk from source
+            return len(source) == 0  # If all chunks matched and there are no leftover source bytes
 
     @staticmethod
     def should_write(source: Union[str, bytes], dst_path: str, encoding="utf-8"):
@@ -155,10 +165,9 @@ class Utils:
         else:
             raise TypeError(f"Unsupported source type: {type(source)}")
         try:
-            # return Utils.file_hash(dst_path) != hashlib.blake2b(source_bytes).digest()
-            with open(dst_path, "rb") as f:
-                return f.read() != source_bytes
-        except Exception:
+            return not Utils.compare_file_with_bytes(dst_path, source_bytes)
+        except Exception as err:
+            print(err)
             return True
 
     # this version cache module to reuse
