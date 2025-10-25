@@ -78,7 +78,7 @@ So lazy to update this, create patch first (convert xml, lua, stage, dkm files t
 ### File handling:
 
 * **`.xml`** → merges unique elements (identified by first attribute, key in normal case).
-* **`.stage`** (XML format) → merge unique elements (identified by attribute name "Key", elements related to "Action" tags are excluded).
+* **`.stage`** (XML format) → merge unique elements (identified by attribute name "Key", "ObjectKey", "Name". "Action" tags identified by attribute name "ActionKey". "Condition" tags are ignored).
 * To modify all elements in `.xml` or `.stage` files, create a `.py` patch script and use XPath to select the elements you want to change.
 * **`.lua`** → merges/adds top-level function & variable definitions with simple topological sorting for dependencies.
 * **`Dictionary`** → merges into `Game_folder/Dictionary`.
