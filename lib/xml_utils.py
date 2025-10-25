@@ -10,6 +10,8 @@ Element = et._Element
 ElementTree = et._ElementTree
 Comment = et._Comment
 
+STAGE_KEYS = {"ActionKey", "Key", "ObjectKey", "Name"}
+STAGE_KEYS2 = {"Group"}
 parser = et.XMLParser(collect_ids=False, remove_comments=True)
 
 
@@ -107,40 +109,61 @@ class XmlUtils:
             self._clear_changes()
             return 3
 
-        with open(fileout, "w", encoding="utf-8") as f:
-            f.write(content)
+        with open(fileout, "wb") as f:
+            f.write(content.encode("utf-8"))
         self._clear_changes()
         return 1
 
-    def _get_element_identifier(self, element: Element):
+    def _get_element_identifier(self, element: Element, ext: str):
         """
         Generates a unique identifier for an element.
-        - If the element has a "Key" attribute, return (tag, "Key", value).
-        - Otherwise, use the first attribute (or (None, None) if no attributes).
-        Returns a tuple: (tag, attribute_name, attribute_value).
+        Return (tag, name, value); otherwise, (tag, None, None).
         """
-        if "Key" in element.attrib:
-            return (element.tag, "Key", element.attrib["Key"])
+        if ext == ".stage":
+            # ignore Condition tags + Action tags without ActionKey
+            if element.tag == "Condition" or (element.tag == "Action" and not element.attrib.get("ActionKey")):
+                return (element.tag, None, None)
 
-        first_attr_pair = next(iter(element.attrib.items()), (None, None))
-        return (element.tag, first_attr_pair[0], first_attr_pair[1])
+            matching_attributes = []
+            matching_attributes2 = []
+
+            for name, value in element.attrib.items():
+                if name in STAGE_KEYS:
+                    matching_attributes.append((name, value))
+                elif name in STAGE_KEYS2:
+                    matching_attributes2.append((name, value))
+
+            if matching_attributes:
+                return (element.tag, *matching_attributes, *matching_attributes2)
+
+            return (element.tag, None, None)
+
+        n, v = next(iter(element.attrib.items()), (None, None))
+        return (element.tag, n, v)
 
     # def _build_xpath(self, path: list[Element], current: Element | None = None):
-    def _build_xpath(self, path: list[Element]):
+    def _build_xpath(self, path: list[Element], ext: str):
         # elements = path if current is None else path + [current]
         segments = []
-        # for elem in elements:
-        for element in path:
-            tag = element.tag
-            # ele_id = next(iter(element.attrib.items()), None)
-            ele_id = self._get_element_identifier(element)
-            if ele_id[1]:
-                # k, v = ele_id
-                t, k, v = ele_id
-                if "'" in v:
-                    segments.append(f'{tag}[@{k}="{v}"]')
+        for ele in path:
+            tag = ele.tag
+            ele_id = self._get_element_identifier(ele, ext)
+
+            # Check if multiple key-value pairs are returned
+            if isinstance(ele_id[1], tuple):
+                segment = tag
+                for name, value in ele_id[1:]:
+                    if '"' in value:
+                        segment += f"[@{name}='{value}']"
+                    else:
+                        segment += f'[@{name}="{value}"]'
+                segments.append(segment)
+            elif ele_id[1]:
+                t, n, v = ele_id
+                if '"' in v:
+                    segments.append(f"{tag}[@{n}='{v}']")
                 else:
-                    segments.append(f"{tag}[@{k}='{v}']")
+                    segments.append(f'{tag}[@{n}="{v}"]')
             else:
                 segments.append(tag)
         return "/".join(segments)  # no "/" + because it point at root
@@ -174,16 +197,13 @@ class XmlUtils:
         parent.append(et.Comment(f" {comment_text} "))
 
     def _handle_new_element(
-        self, parent: Element, new_element: Element, path_to_parent: list[Element], ext
+        self, parent: Element, new_element: Element, path_to_parent: list[Element], ext: str
     ):
-        if ext == ".stage" and (new_element.tag == "Action" or any(e.tag == "Action" for e in path_to_parent)):
-            return
-
         if self.is_create_patch is None:
             parent.append(new_element)
             return
 
-        xpath_to_parent = self._build_xpath(path_to_parent)
+        xpath_to_parent = self._build_xpath(path_to_parent, ext)
         key = (xpath_to_parent, "new")
 
         # Coalesce new elements under the same parent
@@ -202,9 +222,6 @@ class XmlUtils:
     def _handle_updated_attributes(
         self, target: Element, source: Element, path_to_target: list[Element], ext
     ):
-        if ext == ".stage" and any(e.tag == "Action" for e in path_to_target):
-            return
-
         if self.is_create_patch is None:
             target.attrib.update(source.attrib)
             return
@@ -214,42 +231,62 @@ class XmlUtils:
         if diff:
             self._changes.append(
                 {
-                    "xpath": self._build_xpath(path_to_target),
+                    "xpath": self._build_xpath(path_to_target, ext),
                     "type": "update",
                     "diff": diff,
                 }
             )
 
     def _merge_elements(
-        self, target_root: Element, source_root: Element, base_path: list[Element], ext
+        self, target_root: Element, source_root: Element, base_path: list[Element], ext: str
     ):
         stack = [
             (target_root, source_root, list(base_path))
         ]  # stack holds tuples of (target, source, path)
 
         while stack:
-            tgt_elem, src_elem, path = stack.pop()
+            tgt_ele, src_ele, path = stack.pop()
 
             tgt_children_index = {
-                self._get_element_identifier(child): child
-                for child in tgt_elem
+                self._get_element_identifier(child, ext): child
+                for child in tgt_ele
                 if not isinstance(child, Comment)
             }
 
-            for src_child in src_elem:
+            for src_child in src_ele:
                 if isinstance(src_child, Comment):
                     continue
+                if ext == ".stage" and (src_child.tag == "Condition" or (src_child.tag == "Action" and not src_child.attrib.get("ActionKey"))):
+                    # ignore Condition tags + Action tags without ActionKey
+                    continue
 
-                ele_id = self._get_element_identifier(src_child)
+                ele_id = self._get_element_identifier(src_child, ext)
+                if isinstance(ele_id[1], tuple):
+                    name, value = ele_id[1][0], ele_id[1][1]
+                else:
+                    name, value = ele_id[1], ele_id[2]
                 tgt_child = tgt_children_index.get(ele_id)
 
-                attrib_name = ele_id[1]
-                not_unique = not attrib_name or (attrib_name != "Key" if ext == ".stage" else attrib_name[0].isupper())
+                not_unique = not name or (name[0].isupper() if ext != ".stage" else False)
+
+                # # If .stage file and the element has "ObjectKey" attribute, skip this element if it's not inside an Action with ActionKey
+                # if ext == ".stage" and name == "ObjectKey":
+                #     parent = tgt_ele
+                #     is_inside_action = False
+                #     # Traverse up the ancestors of tgt_ele to find an "Action" with "ActionKey"
+                #     while parent is not None:
+                #         if parent.tag == "Action":
+                #             is_inside_action = True
+                #             break
+                #         parent = parent.getparent()
+                #     if not is_inside_action:
+                #         continue
 
                 if tgt_child is None:
                     if not_unique:
                         continue
-                    self._handle_new_element(tgt_elem, src_child, path, ext)
+
+                    self._handle_new_element(tgt_ele, src_child, path, ext)
                     continue
 
                 current_path = path + [tgt_child]
@@ -257,10 +294,7 @@ class XmlUtils:
                 if len(src_child):
                     stack.append((tgt_child, src_child, current_path))
 
-                if not_unique:
-                    continue
-
-                if tgt_child.attrib == src_child.attrib:
+                if not_unique or tgt_child.attrib == src_child.attrib:
                     continue
 
                 self._handle_updated_attributes(tgt_child, src_child, current_path, ext)
