@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, List, Tuple
 from xml.sax.saxutils import quoteattr
 
 from lxml import etree as et
@@ -75,13 +75,13 @@ class XmlUtils:
         for change in self._changes:
             xpath = change["xpath"]
             if xpath:
-                target = f"\n\ttarget = xml.root.xpath({quoteattr(xpath)})[0]\n"
+                target = f"\n\ttarget = xml.root.find({quoteattr(xpath)})\n"
             else:
                 target = "\n\ttarget = xml.root\n"
             change_blocks.append(target)
 
             if change["type"] == "new":
-                elements: list[Element] = change["element"]
+                elements: List[Element] = change["element"]
                 if len(elements) > 1:
                     root = et.Element("root")
                     root.extend(elements)
@@ -141,87 +141,51 @@ class XmlUtils:
         n, v = next(iter(element.attrib.items()), (None, None))
         return (element.tag, n, v)
 
-    # def _build_xpath(self, path: list[Element], current: Element | None = None):
-    def _build_xpath(self, path: list[Element], ext: str):
-        # elements = path if current is None else path + [current]
+    def _build_xpath(self, path: List[Tuple]):
         segments = []
-        for ele in path:
-            tag = ele.tag
-            ele_id = self._get_element_identifier(ele, ext)
 
-            # Check if multiple key-value pairs are returned
+        for ele_id in path:
+            segment = ele_id[0]
+
             if isinstance(ele_id[1], tuple):
-                segment = tag
-                for name, value in ele_id[1:]:
-                    if '"' in value:
-                        segment += f"[@{name}='{value}']"
+                for n, v in ele_id[1:]:
+                    if '"' in v:
+                        segment += f"[@{n}='{v}']"
                     else:
-                        segment += f'[@{name}="{value}"]'
-                segments.append(segment)
+                        segment += f'[@{n}="{v}"]'
             elif ele_id[1]:
                 t, n, v = ele_id
                 if '"' in v:
-                    segments.append(f"{tag}[@{n}='{v}']")
+                    segment = f"{t}[@{n}='{v}']"
                 else:
-                    segments.append(f'{tag}[@{n}="{v}"]')
-            else:
-                segments.append(tag)
+                    segment = f'{t}[@{n}="{v}"]'
+
+            segments.append(segment)
+
         return "/".join(segments)  # no "/" + because it point at root
         # "/" + for search from root, "//" + for search from everywhere
 
-    def _add_comment_if_needed(
-        self,
-        parent: Element,
-        comment_text: str,
-        *,
-        before: Element | None = None,
-    ):
-        if before is not None:
-            index = parent.index(before)
-            if index > 0:
-                prev = parent[index - 1]
-                if (
-                    isinstance(prev, Comment)
-                    and prev.text
-                    and prev.text.strip() == comment_text
-                ):
-                    return  # Already has the comment
-            parent.insert(index, et.Comment(f" {comment_text} "))
-            return
-
-        # len(parent) > 0: Make sure parent has at least one child element.
-        # parent[-1]: Gets the last child of parent.
-        if len(parent) > 0 and isinstance(parent[-1], Comment):
-            if parent[-1].text and parent[-1].text.strip() == comment_text:
-                return False
-        parent.append(et.Comment(f" {comment_text} "))
-
-    def _handle_new_element(
-        self, parent: Element, new_element: Element, path_to_parent: list[Element], ext: str
-    ):
+    def _handle_new_element(self, parent: Element, ele: Element, xpath: str):
         if self.is_create_patch is None:
-            parent.append(new_element)
+            parent.append(ele)
             return
 
-        xpath_to_parent = self._build_xpath(path_to_parent, ext)
-        key = (xpath_to_parent, "new")
+        key = (xpath, "new")
 
         # Coalesce new elements under the same parent
         change = self._change_index.get(key)
         if change:
-            change["element"].append(new_element)
+            change["element"].append(ele)
         else:
             change = {
-                "xpath": xpath_to_parent,
+                "xpath": xpath,
                 "type": "new",
-                "element": [new_element],
+                "element": [ele],
             }
             self._changes.append(change)
             self._change_index[key] = change
 
-    def _handle_updated_attributes(
-        self, target: Element, source: Element, path_to_target: list[Element], ext
-    ):
+    def _handle_updated_attributes(self, target: Element, source: Element, xpath: str):
         if self.is_create_patch is None:
             target.attrib.update(source.attrib)
             return
@@ -231,18 +195,15 @@ class XmlUtils:
         if diff:
             self._changes.append(
                 {
-                    "xpath": self._build_xpath(path_to_target, ext),
+                    "xpath": xpath,
                     "type": "update",
                     "diff": diff,
                 }
             )
 
-    def _merge_elements(
-        self, target_root: Element, source_root: Element, base_path: list[Element], ext: str
-    ):
-        stack = [
-            (target_root, source_root, list(base_path))
-        ]  # stack holds tuples of (target, source, path)
+    def _merge_elements(self, target_root: Element, source_root: Element, ext: str):
+        # stack holds tuples of (target, source, path)
+        stack = [(target_root, source_root, [])]
 
         while stack:
             tgt_ele, src_ele, path = stack.pop()
@@ -269,27 +230,14 @@ class XmlUtils:
 
                 not_unique = not name or (name[0].isupper() if ext != ".stage" else False)
 
-                # # If .stage file and the element has "ObjectKey" attribute, skip this element if it's not inside an Action with ActionKey
-                # if ext == ".stage" and name == "ObjectKey":
-                #     parent = tgt_ele
-                #     is_inside_action = False
-                #     # Traverse up the ancestors of tgt_ele to find an "Action" with "ActionKey"
-                #     while parent is not None:
-                #         if parent.tag == "Action":
-                #             is_inside_action = True
-                #             break
-                #         parent = parent.getparent()
-                #     if not is_inside_action:
-                #         continue
-
                 if tgt_child is None:
                     if not_unique:
                         continue
 
-                    self._handle_new_element(tgt_ele, src_child, path, ext)
+                    self._handle_new_element(tgt_ele, src_child, self._build_xpath(path))
                     continue
 
-                current_path = path + [tgt_child]
+                current_path = path + [ele_id]
                 # Queue deeper children to stack
                 if len(src_child):
                     stack.append((tgt_child, src_child, current_path))
@@ -297,7 +245,7 @@ class XmlUtils:
                 if not_unique or tgt_child.attrib == src_child.attrib:
                     continue
 
-                self._handle_updated_attributes(tgt_child, src_child, current_path, ext)
+                self._handle_updated_attributes(tgt_child, src_child, self._build_xpath(current_path))
 
     def merge_with(self, update_file: str, is_create_patch: Optional[bool]):
         update_tree = et.parse(update_file, parser=parser)
@@ -313,7 +261,34 @@ class XmlUtils:
 
         self.is_create_patch = is_create_patch
         self._clear_changes()
-        self._merge_elements(self.root, update_root, [], os.path.splitext(update_file)[1])
+        self._merge_elements(self.root, update_root, os.path.splitext(update_file)[1])
+
+    # def _add_comment_if_needed(
+    #     self,
+    #     parent: Element,
+    #     comment_text: str,
+    #     *,
+    #     before: Element | None = None,
+    # ):
+    #     if before is not None:
+    #         index = parent.index(before)
+    #         if index > 0:
+    #             prev = parent[index - 1]
+    #             if (
+    #                 isinstance(prev, Comment)
+    #                 and prev.text
+    #                 and prev.text.strip() == comment_text
+    #             ):
+    #                 return  # Already has the comment
+    #         parent.insert(index, et.Comment(f" {comment_text} "))
+    #         return
+
+    #     # len(parent) > 0: Make sure parent has at least one child element.
+    #     # parent[-1]: Gets the last child of parent.
+    #     if len(parent) > 0 and isinstance(parent[-1], Comment):
+    #         if parent[-1].text and parent[-1].text.strip() == comment_text:
+    #             return False
+    #     parent.append(et.Comment(f" {comment_text} "))
 
     # def _merge_elements_recurse(self, target: Element, source: Element, path: list):
     #     target_children_index = {
